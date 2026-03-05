@@ -1,0 +1,4 @@
+name: batch-register
+description: Declarative workflow for parallel account registration with retry and branch summary.
+author: vmoranv
+source_repo: https://github.com/vmoranv/jshook_workflow_batch_register
