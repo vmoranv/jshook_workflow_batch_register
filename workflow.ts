@@ -1,5 +1,10 @@
-import type { WorkflowContract, WorkflowExecutionContext } from '@jshookmcp/extension-sdk/workflow';
-import { createWorkflow, toolNode, sequenceNode, parallelNode } from '@jshookmcp/extension-sdk/workflow';
+import {
+  defineWorkflow,
+  parallelStep,
+  sequenceStep,
+  toolStep,
+  type WorkflowExecutionContext,
+} from '@jshookmcp/extension-sdk/workflow';
 
 interface BatchAccountConfig {
   fields?: Record<string, unknown>;
@@ -61,12 +66,17 @@ function buildRegisterWorkflowConfig(
   account: BatchAccountConfig,
 ) {
   const fields = account.fields ?? {};
-  const username = typeof fields.username === 'string' ? fields.username : `demo-user-${Math.random().toString(36).slice(2, 8)}`;
+  const username =
+    typeof fields.username === 'string'
+      ? fields.username
+      : `demo-user-${Math.random().toString(36).slice(2, 8)}`;
   const email = typeof fields.email === 'string' ? fields.email : '';
   const password = typeof fields.password === 'string' ? fields.password : '';
 
   if (!email || !password) {
-    throw new Error('[workflow.batch-register] Each account must provide fields.email and fields.password');
+    throw new Error(
+      '[workflow.batch-register] Each account must provide fields.email and fields.password',
+    );
   }
 
   const extraFields: Record<string, unknown> = {
@@ -103,126 +113,135 @@ function buildRegisterWorkflowConfig(
   };
 }
 
-export default createWorkflow(workflowId, 'Batch Register Accounts')
-  .description(
-    'Run the external register-account-flow workflow for multiple accounts with configurable concurrency, retry policy, and per-account overrides.',
-  )
-  .tags(['workflow', 'registration', 'batch', 'automation'])
-  .timeoutMs(15 * 60_000)
-  .defaultMaxConcurrency(3)
-  .buildGraph((ctx: WorkflowExecutionContext) => {
-    const registerWorkflowId = ctx.getConfig<string>(
-      `${configPrefix}.registerWorkflowId`,
-      'workflow.register-account-flow.v1',
-    );
-    const registerUrl = ctx.getConfig<string>(`${configPrefix}.registerUrl`, '');
-    if (!registerUrl) {
-      throw new Error('[workflow.batch-register] Missing required config: workflows.batchRegister.registerUrl');
-    }
+export default defineWorkflow(workflowId, 'Batch Register Accounts', (workflow) =>
+  workflow
+    .description(
+      'Run the external register-account-flow workflow for multiple accounts with configurable concurrency, retry policy, and per-account overrides.',
+    )
+    .tags(['workflow', 'registration', 'batch', 'automation'])
+    .timeoutMs(15 * 60_000)
+    .defaultMaxConcurrency(3)
+    .buildGraph((ctx: WorkflowExecutionContext) => {
+      const registerWorkflowId = ctx.getConfig<string>(
+        `${configPrefix}.registerWorkflowId`,
+        'workflow.register-account-flow.v1',
+      );
+      const registerUrl = ctx.getConfig<string>(`${configPrefix}.registerUrl`, '');
+      if (!registerUrl) {
+        throw new Error(
+          '[workflow.batch-register] Missing required config: workflows.batchRegister.registerUrl',
+        );
+      }
 
-    const defaultSubmitSelector = ctx.getConfig<string>(
-      `${configPrefix}.submitSelector`,
-      "button[type='submit']",
-    );
-    const defaultVerificationLinkPattern = ctx.getConfig<string>(
-      `${configPrefix}.verificationLinkPattern`,
-      '/api/v1/auths/activate',
-    );
-    const maxConcurrency = ctx.getConfig<number>(`${configPrefix}.maxConcurrency`, 3);
-    const maxAttempts = ctx.getConfig<number>(`${configPrefix}.maxAttempts`, 2);
-    const retryBackoffMs = ctx.getConfig<number>(`${configPrefix}.retryBackoffMs`, 1_000);
-    const retryMultiplier = ctx.getConfig<number>(`${configPrefix}.retryMultiplier`, 2);
-    const timeoutPerAccountMs = ctx.getConfig<number>(`${configPrefix}.timeoutPerAccountMs`, 90_000);
-    const defaultEmailPollingWaitMs = ctx.getConfig<number>(
-      `${configPrefix}.emailPollingWaitMs`,
-      6_000,
-    );
-    const defaultAuthMinConfidence = ctx.getConfig<number>(
-      `${configPrefix}.authMinConfidence`,
-      0.3,
-    );
-
-    const accounts = normalizeAccounts(ctx.getConfig<unknown>(`${configPrefix}.accounts`, []));
-    if (accounts.length === 0) {
-      throw new Error('[workflow.batch-register] Missing required config: workflows.batchRegister.accounts');
-    }
-
-    const parallel = parallelNode('register-parallel')
-      .maxConcurrency(Math.max(1, maxConcurrency))
-      .failFast(false);
-
-    accounts.forEach((account, index) => {
-      const registerConfig = buildRegisterWorkflowConfig(
-        registerUrl,
-        defaultSubmitSelector,
-        defaultVerificationLinkPattern,
-        timeoutPerAccountMs,
-        defaultEmailPollingWaitMs,
-        defaultAuthMinConfidence,
-        account,
+      const defaultSubmitSelector = ctx.getConfig<string>(
+        `${configPrefix}.submitSelector`,
+        "button[type='submit']",
+      );
+      const defaultVerificationLinkPattern = ctx.getConfig<string>(
+        `${configPrefix}.verificationLinkPattern`,
+        '/api/v1/auths/activate',
+      );
+      const maxConcurrency = ctx.getConfig<number>(`${configPrefix}.maxConcurrency`, 3);
+      const maxAttempts = ctx.getConfig<number>(`${configPrefix}.maxAttempts`, 2);
+      const retryBackoffMs = ctx.getConfig<number>(`${configPrefix}.retryBackoffMs`, 1_000);
+      const retryMultiplier = ctx.getConfig<number>(`${configPrefix}.retryMultiplier`, 2);
+      const timeoutPerAccountMs = ctx.getConfig<number>(
+        `${configPrefix}.timeoutPerAccountMs`,
+        90_000,
+      );
+      const defaultEmailPollingWaitMs = ctx.getConfig<number>(
+        `${configPrefix}.emailPollingWaitMs`,
+        6_000,
+      );
+      const defaultAuthMinConfidence = ctx.getConfig<number>(
+        `${configPrefix}.authMinConfidence`,
+        0.3,
       );
 
-      parallel.step(
-        toolNode(`register-account-${index + 1}`, 'run_extension_workflow')
-          .input({
-            workflowId: registerWorkflowId,
-            config: registerConfig,
-          })
-          .retry({
-            maxAttempts: Math.max(1, maxAttempts),
-            backoffMs: Math.max(0, retryBackoffMs),
-            multiplier: Math.max(1, retryMultiplier),
-          })
-          .timeout(timeoutPerAccountMs + 60_000),
-      );
-    });
+      const accounts = normalizeAccounts(ctx.getConfig<unknown>(`${configPrefix}.accounts`, []));
+      if (accounts.length === 0) {
+        throw new Error(
+          '[workflow.batch-register] Missing required config: workflows.batchRegister.accounts',
+        );
+      }
 
-    return sequenceNode('batch-register-root')
-      .step(
-        toolNode('batch-register-summary', 'console_execute').input({
-          expression: `(${JSON.stringify({
-            status: 'batch_register_started',
-            workflowId,
-            registerWorkflowId,
+      const parallel = parallelStep('register-parallel', (step) => {
+        step.maxConcurrency(Math.max(1, maxConcurrency)).failFast(false);
+        accounts.forEach((account, index) => {
+          const registerConfig = buildRegisterWorkflowConfig(
             registerUrl,
-            accountCount: accounts.length,
-            maxConcurrency,
-            maxAttempts,
-            retryBackoffMs,
-            retryMultiplier,
+            defaultSubmitSelector,
+            defaultVerificationLinkPattern,
             timeoutPerAccountMs,
-          })})`,
-        }),
-      )
-      .step(parallel)
-      .step(
-        toolNode('batch-register-finish', 'console_execute').input({
-          expression: `(${JSON.stringify({
-            status: 'batch_register_completed',
-            workflowId,
-            registerWorkflowId,
-            accountCount: accounts.length,
-            note: 'Inspect run_extension_workflow step outputs for per-account success or failure details.',
-          })})`,
-        }),
-      );
-  })
-  .onStart((ctx) => {
-    ctx.emitMetric('workflow_runs_total', 1, 'counter', {
-      workflowId,
-      stage: 'start',
-    });
-  })
-  .onFinish((ctx) => {
-    ctx.emitMetric('workflow_runs_total', 1, 'counter', {
-      workflowId,
-      stage: 'finish',
-    });
-  })
-  .onError((ctx, error) => {
-    ctx.emitMetric('workflow_errors_total', 1, 'counter', {
-      workflowId,
-      error: error.name,
-    });
-  })
-  .build();
+            defaultEmailPollingWaitMs,
+            defaultAuthMinConfidence,
+            account,
+          );
+
+          step.step(
+            toolStep(`register-account-${index + 1}`, 'run_extension_workflow', {
+              input: {
+                workflowId: registerWorkflowId,
+                config: registerConfig,
+              },
+              retry: {
+                maxAttempts: Math.max(1, maxAttempts),
+                backoffMs: Math.max(0, retryBackoffMs),
+                multiplier: Math.max(1, retryMultiplier),
+              },
+              timeoutMs: timeoutPerAccountMs + 60_000,
+            }),
+          );
+        });
+      });
+
+      return sequenceStep('batch-register-root', (root) => {
+        root.tool('batch-register-summary', 'console_execute', {
+          input: {
+            expression: `(${JSON.stringify({
+              status: 'batch_register_started',
+              workflowId,
+              registerWorkflowId,
+              registerUrl,
+              accountCount: accounts.length,
+              maxConcurrency,
+              maxAttempts,
+              retryBackoffMs,
+              retryMultiplier,
+              timeoutPerAccountMs,
+            })})`,
+          },
+        });
+        root.step(parallel);
+        root.tool('batch-register-finish', 'console_execute', {
+          input: {
+            expression: `(${JSON.stringify({
+              status: 'batch_register_completed',
+              workflowId,
+              registerWorkflowId,
+              accountCount: accounts.length,
+              note: 'Inspect run_extension_workflow step outputs for per-account success or failure details.',
+            })})`,
+          },
+        });
+      });
+    })
+    .onStart((ctx) => {
+      ctx.emitMetric('workflow_runs_total', 1, 'counter', {
+        workflowId,
+        stage: 'start',
+      });
+    })
+    .onFinish((ctx) => {
+      ctx.emitMetric('workflow_runs_total', 1, 'counter', {
+        workflowId,
+        stage: 'finish',
+      });
+    })
+    .onError((ctx, error) => {
+      ctx.emitMetric('workflow_errors_total', 1, 'counter', {
+        workflowId,
+        error: error.name,
+      });
+    }),
+);
